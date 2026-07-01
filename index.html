@@ -1,0 +1,471 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>P4 Style Skill Select - Control System</title>
+    <style>
+        :root {
+            --p4-yellow: #ffeb00;
+            --p4-orange: #ff9900;
+            --p4-dark: #121212;
+            --tv-red: #ff0040;
+            --tv-green: #00ff66;
+            --tv-blue: #00a2ff;
+        }
+
+        html, body {
+            margin: 0;
+            padding: 0;
+            width: 100%;
+            height: 100%;
+            background-color: #000;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            font-family: "Impact", "Helvetica Neue", Arial, "Hiragino Kaku Gothic ProN", sans-serif;
+            overflow: hidden;
+            -webkit-tap-highlight-color: transparent;
+            cursor: pointer;
+        }
+
+        /* ─── 16:9 基準のメインコンテナ ─── */
+        .stage-169 {
+            position: relative;
+            width: 100vw;
+            height: calc(100vw * 9 / 16);
+            max-width: 1066px; 
+            max-height: 600px;
+            background-color: var(--p4-dark);
+            box-shadow: 0 0 40px rgba(0,0,0,0.8);
+            overflow: hidden;
+        }
+        @media (max-aspect-ratio: 16/9) {
+            .stage-169 {
+                width: calc(100vh * 16 / 9);
+                height: 100vh;
+            }
+        }
+
+        /* ─── 背景：ベースの黄色空間 ─── */
+        .yellow-matrix-bg {
+            position: absolute;
+            top: 0; left: 0; width: 100%; height: 100%;
+            background: radial-gradient(circle at 30% 50%, #443e00 0%, #101001 100%);
+            z-index: 1;
+        }
+
+        /* アナログテレビ風の走査線オーバーレイ */
+        .yellow-matrix-bg::before {
+            content: ""; position: absolute; top: 0; left: 0; width: 100%; height: 100%;
+            background: linear-gradient(rgba(0,0,0,0.25) 2px, transparent 2px);
+            background-size: 100% 4px;
+            z-index: 2;
+        }
+
+        /* ─── ギミック：アナログテレビの3色（RGB）枠 ─── */
+        .tv-rgb-frame {
+            position: absolute;
+            top: 10%;
+            bottom: 10%;
+            left: 5%;
+            width: 42%;
+            border-radius: 16px;
+            pointer-events: none;
+            z-index: 10;
+            opacity: 0;
+            transform: scale(0.95);
+            transition: all 0.15s ease-out;
+            overflow: hidden; /* 【修正】この枠の中だけで泡を収めるためのマスク */
+        }
+        .stage-169.tv-on .tv-rgb-frame {
+            opacity: 1;
+            transform: scale(1);
+            box-shadow: 
+                -4px 0 15px var(--tv-red), 
+                0 0 20px var(--tv-green), 
+                4px 0 15px var(--tv-blue),
+                inset 0 0 25px rgba(0,0,0,0.8);
+            border: 4px solid rgba(255,255,255,0.9);
+            animation: tvGlitchPulse 0.2s linear infinite alternate;
+        }
+
+        /* ─── 【修正】泡エフェクトをRGB枠の「子要素」として配置 ─── */
+        .bubble-container {
+            position: absolute;
+            top: 0; left: 0; width: 100%; height: 100%;
+            z-index: 1;
+            pointer-events: none;
+        }
+        .bubble {
+            position: absolute;
+            bottom: -20px;
+            background: rgba(255, 255, 255, 0.06);
+            border: 1px solid rgba(255, 255, 255, 0.2);
+            border-radius: 50%;
+            box-shadow: inset 0 2px 4px rgba(255,255,255,0.3), 0 0 6px rgba(255, 235, 0, 0.15);
+            animation: floatUp 3.5s linear infinite;
+        }
+
+        @keyframes floatUp {
+            0% { transform: translateY(0) translateX(0) scale(0.8); opacity: 0; }
+            10% { opacity: 1; }
+            90% { opacity: 0.8; }
+            100% { transform: translateY(-450px) translateX(var(--drift)) scale(1.2); opacity: 0; }
+        }
+
+        /* ─── スキルウィンドウのレイアウト ─── */
+        .skill-window {
+            position: absolute;
+            top: 10%;
+            bottom: 10%;
+            left: 5%;
+            width: 42%;
+            box-sizing: border-box;
+            padding: 50px 20px 20px 20px;
+            display: flex;
+            flex-direction: column;
+            gap: 12px;
+            z-index: 12;
+            opacity: 0;
+            transition: opacity 0.3s ease-in-out;
+            transition-delay: 0.1s;
+            pointer-events: none; /* 初期状態はタップ無効 */
+        }
+        .stage-169.tv-on .skill-window {
+            opacity: 1;
+            pointer-events: auto; /* TV起動後はスキル選択のタップを有効化 */
+        }
+
+        /* ウィンドウてっぺんの「Skill」文字 */
+        .window-title {
+            position: absolute;
+            top: -18px;
+            left: 30px;
+            background: var(--p4-yellow);
+            color: #000;
+            font-size: 22px;
+            font-weight: 900;
+            padding: 2px 25px;
+            text-transform: uppercase;
+            transform: skewX(-12deg);
+            border: 3px solid #000;
+            box-shadow: 4px 4px 0 #000;
+            letter-spacing: 2px;
+        }
+
+        /* ─── スキルアイテム構造 ─── */
+        .skill-row {
+            position: relative;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 10px 15px;
+            background: rgba(0,0,0,0.5);
+            border-radius: 8px;
+            border: 4px solid transparent; /* 選択時のサイズズレ防止用 */
+            transition: transform 0.1s ease, background-color 0.2s;
+            cursor: pointer;
+        }
+
+        /* スキル左側（アイコンと名前） */
+        .skill-core {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+        }
+
+        /* 属性アイコン */
+        .attr-icon {
+            width: 32px;
+            height: 32px;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+        }
+
+        .skill-text {
+            font-size: 20px;
+            font-weight: bold;
+            color: #999;
+            letter-spacing: 1px;
+            transition: color 0.15s;
+        }
+
+        /* スキル右側（コスト） */
+        .skill-cost {
+            font-size: 15px;
+            font-weight: 900;
+            color: #777;
+            background: rgba(0,0,0,0.6);
+            padding: 2px 10px;
+            border-radius: 4px;
+            transition: all 0.15s;
+        }
+
+        /* ─── 【アクティブ】選択されているスキルの装飾 ─── */
+        .skill-row.selected {
+            background: var(--p4-yellow);
+            border: 4px solid #000;
+            border-radius: 14px; 
+            box-shadow: 0 5px 15px rgba(0,0,0,0.4);
+        }
+        
+        .skill-row.selected .skill-text {
+            color: #000;
+            font-weight: 900;
+        }
+
+        .skill-row.selected .skill-cost {
+            background: #000;
+            color: var(--p4-yellow);
+        }
+
+        /* 選択中のみ左側に表示される ◉ アイコン */
+        .target-bullet {
+            width: 0;
+            height: 18px;
+            opacity: 0;
+            transition: width 0.15s ease, opacity 0.15s;
+        }
+        .skill-row.selected .target-bullet {
+            width: 18px;
+            opacity: 1;
+            margin-right: -4px;
+        }
+
+        /* 選択中の名前の右側に表示される 上下選択矢印 */
+        .nav-arrows {
+            width: 0;
+            height: 20px;
+            opacity: 0;
+            transition: width 0.15s ease, opacity 0.15s;
+        }
+        .skill-row.selected .nav-arrows {
+            width: 20px;
+            opacity: 1;
+            margin-left: 8px;
+            animation: arrowPulse 0.5s ease-in-out infinite alternate;
+        }
+
+        @keyframes arrowPulse {
+            0% { transform: translateY(-2px); }
+            100% { transform: translateY(2px); }
+        }
+
+        /* ─── 右側：背景デコレーション ─── */
+        .side-branding {
+            position: absolute;
+            right: 8%;
+            top: 25%;
+            transform: rotate(5deg);
+            text-align: right;
+            user-select: none;
+            pointer-events: none;
+        }
+        .side-branding h2 {
+            font-size: 70px;
+            margin: 0;
+            color: rgba(255,255,255,0.04);
+            line-height: 0.9;
+            text-transform: uppercase;
+        }
+        .side-branding p {
+            font-size: 16px;
+            color: var(--p4-orange);
+            letter-spacing: 6px;
+            font-weight: bold;
+            opacity: 0.4;
+            margin: 5px 0 0 0;
+        }
+
+        /* 画面案内テキスト */
+        .tap-prompt {
+            position: absolute;
+            top: 50%; left: 50%;
+            transform: translate(-50%, -50%);
+            font-size: 18px;
+            font-weight: bold;
+            color: var(--p4-yellow);
+            letter-spacing: 2px;
+            text-shadow: 2px 2px 0 #000;
+            pointer-events: none;
+            z-index: 20;
+            transition: opacity 0.2s;
+            border: 2px solid var(--p4-yellow);
+            padding: 10px 20px;
+            background: rgba(0,0,0,0.8);
+        }
+        .stage-169.tv-on .tap-prompt {
+            opacity: 0;
+        }
+
+        @keyframes tvGlitchPulse {
+            0% { border-color: rgba(255, 255, 255, 0.85); filter: hue-rotate(0deg); }
+            100% { border-color: rgba(255, 235, 0, 1); filter: hue-rotate(6deg); }
+        }
+    </style>
+</head>
+<body>
+
+    <div class="stage-169" id="p4Stage" onclick="tryTurnOnTV(event)">
+
+        <div class="tap-prompt" id="promptText">TAP TO TURN ON TV</div>
+        <div class="yellow-matrix-bg"></div>
+
+        <!-- 3色RGB枠 -->
+        <div class="tv-rgb-frame">
+            <!-- 【修正】泡コンテナを枠の内部に完全移設 -->
+            <div class="bubble-container" id="bubbleMachine"></div>
+        </div>
+
+        <!-- スキル選択ウィンドウ -->
+        <div class="skill-window" id="skillWindow">
+            <div class="window-title">Skill</div>
+
+            <!-- 1. ジオ（初期デフォルト選択） -->
+            <div class="skill-row selected" onclick="selectSkill(this, event)">
+                <div class="skill-core">
+                    <svg class="target-bullet" viewBox="0 0 24 24">
+                        <circle cx="12" cy="12" r="10" fill="none" stroke="#000" stroke-width="3"/>
+                        <circle cx="12" cy="12" r="4" fill="#000"/>
+                    </svg>
+                    
+                    <div class="attr-icon">
+                        <svg viewBox="0 0 24 24" width="28" height="28">
+                            <polygon points="13,2 3,14 11,14 9,22 21,10 13,10" fill="#ffeb00" stroke="#000" stroke-width="1.5"/>
+                        </svg>
+                    </div>
+
+                    <div class="skill-text">ジオ</div>
+
+                    <svg class="nav-arrows" viewBox="0 0 24 24">
+                        <polygon points="12,2 17,7 7,7" fill="#000"/>
+                        <polygon points="12,22 17,17 7,17" fill="#000"/>
+                    </svg>
+                </div>
+                <div class="skill-cost">4 SP</div>
+            </div>
+
+            <!-- 2. スラッシュ -->
+            <div class="skill-row" onclick="selectSkill(this, event)">
+                <div class="skill-core">
+                    <svg class="target-bullet" viewBox="0 0 24 24">
+                        <circle cx="12" cy="12" r="10" fill="none" stroke="#000" stroke-width="3"/>
+                        <circle cx="12" cy="12" r="4" fill="#000"/>
+                    </svg>
+                    
+                    <div class="attr-icon">
+                        <svg viewBox="0 0 24 24" width="26" height="26">
+                            <path d="M2,21 L7,14 L4,11 L13,6 L10,3 L22,2 L19,14 L16,11 L11,17 L13,20 Z" fill="#ff9900" stroke="#000" stroke-width="1.5"/>
+                        </svg>
+                    </div>
+
+                    <div class="skill-text">スラッシュ</div>
+
+                    <svg class="nav-arrows" viewBox="0 0 24 24">
+                        <polygon points="12,2 17,7 7,7" fill="#000"/>
+                        <polygon points="12,22 17,17 7,17" fill="#000"/>
+                    </svg>
+                </div>
+                <div class="skill-cost">5% HP</div>
+            </div>
+
+            <!-- 3. タルカジャ -->
+            <div class="skill-row" onclick="selectSkill(this, event)">
+                <div class="skill-core">
+                    <svg class="target-bullet" viewBox="0 0 24 24">
+                        <circle cx="12" cy="12" r="10" fill="none" stroke="#000" stroke-width="3"/>
+                        <circle cx="12" cy="12" r="4" fill="#000"/>
+                    </svg>
+                    
+                    <div class="attr-icon">
+                        <svg viewBox="0 0 24 24" width="26" height="26">
+                            <rect x="3" y="6" width="11" height="15" rx="2" fill="#00a2ff" stroke="#000" stroke-width="1.5" transform="rotate(-10 3 6)"/>
+                            <rect x="9" y="4" width="11" height="15" rx="2" fill="#00e5ff" stroke="#000" stroke-width="1.5" transform="rotate(5 9 4)"/>
+                        </svg>
+                    </div>
+
+                    <div class="skill-text">タルカジャ</div>
+
+                    <svg class="nav-arrows" viewBox="0 0 24 24">
+                        <polygon points="12,2 17,7 7,7" fill="#000"/>
+                        <polygon points="12,22 17,17 7,17" fill="#000"/>
+                    </svg>
+                </div>
+                <div class="skill-cost">12 SP</div>
+            </div>
+
+        </div>
+
+        <div class="side-branding">
+            <h2>Channel<br>04</h2>
+            <p>TELEVISION MATRIX</p>
+        </div>
+
+    </div>
+
+    <script>
+        // =========================================================
+        //  【オーディオ設定】
+        // =========================================================
+        const SE_TV_ON = "決定ボタンを押す12.mp3";    // 起動時のSE
+        const SE_SELECT = "決定ボタンを押す7.mp3";   // 選択肢移動のSE
+
+        const audioTvOn = new Audio(SE_TV_ON);
+        const audioSelect = new Audio(SE_SELECT);
+
+        let tvIsOn = false;
+
+        // ─── 泡をRGB枠の中にランダム生成するロジック ───
+        const machine = document.getElementById('bubbleMachine');
+        const count = 18; 
+
+        for(let i = 0; i < count; i++) {
+            const bubble = document.createElement('div');
+            bubble.className = 'bubble';
+            const size = Math.random() * 10 + 5; 
+            bubble.style.width = `${size}px`;
+            bubble.style.height = `${size}px`;
+            bubble.style.left = `${Math.random() * 100}%`;
+            bubble.style.animationDelay = `${Math.random() * 3.5}s`;
+            bubble.style.animationDuration = `${Math.random() * 2 + 2.5}s`;
+            bubble.style.setProperty('--drift', `${(Math.random() - 0.5) * 50}px`);
+            machine.appendChild(bubble);
+        }
+
+        // ─── 全体タップ：テレビON（初回のみ） ───
+        function tryTurnOnTV(event) {
+            if (tvIsOn) return; 
+            tvIsOn = true;
+
+            const stage = document.getElementById('p4Stage');
+            stage.classList.add('tv-on');
+            
+            // 起動音の再生
+            audioTvOn.currentTime = 0;
+            audioTvOn.play().catch(e => console.log("Audio play blocked:", e));
+        }
+
+        // ─── スキル要素タップ：選択肢の移動機能 ───
+        function selectSkill(element, event) {
+            // 親（全体タップ）へのイベント伝播をストップさせ、起動処理と混ざるのを防ぐ
+            event.stopPropagation();
+
+            // すでに選択されているものをタップした場合は何もしない
+            if (element.classList.contains('selected')) return;
+
+            // 全行から一旦selectedを剥がす
+            const rows = document.querySelectorAll('.skill-row');
+            rows.forEach(row => row.classList.remove('selected'));
+
+            // タップされた行にselectedを付与
+            element.classList.add('selected');
+
+            // 選択移動音の再生
+            audioSelect.currentTime = 0;
+            audioSelect.play().catch(e => console.log("Audio play blocked:", e));
+        }
+    </script>
+</body>
+</html>
